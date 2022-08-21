@@ -104,7 +104,7 @@ bool ShellCommand::tryWaitProcessWithTimeout(size_t timeout_in_seconds)
     return waitForPid(pid, timeout_in_seconds);
 }
 
-void ShellCommand::logCommand(const char * filename, char * const argv[])
+void ShellCommand::logCommand(const char * filename, char * const argv[], const std::vector<std::string> *env)
 {
     WriteBufferFromOwnString args;
     for (int i = 0; argv != nullptr && argv[i] != nullptr; ++i)
@@ -115,6 +115,17 @@ void ShellCommand::logCommand(const char * filename, char * const argv[])
         /// NOTE: No escaping is performed.
         args << "'" << argv[i] << "'";
     }
+    if (!env->empty())
+    {
+        args << " (env: ";
+        for (size_t i = 0; i < env->size(); i += 2)
+        {
+            if (i > 0)
+                args << ", ";
+            args << (*env)[i] << "='" << (*env)[i + 1] << "'";
+        }
+        args << " )";
+    }
     LOG_TRACE(ShellCommand::getLogger(), "Will start shell command '{}' with arguments {}", filename, args.str());
 }
 
@@ -123,7 +134,7 @@ std::unique_ptr<ShellCommand> ShellCommand::executeImpl(
     char * const argv[],
     const Config & config)
 {
-    logCommand(filename, argv);
+    logCommand(filename, argv, &config.env_vars);
     ProfileEvents::increment(ProfileEvents::ExecuteShellCommand);
 
 #if !defined(USE_MUSL)
@@ -196,6 +207,9 @@ std::unique_ptr<ShellCommand> ShellCommand::executeImpl(
             if (fd != dup2(fds.fds_rw[0], fd))
                 _exit(static_cast<int>(ReturnCodes::CANNOT_DUP_WRITE_DESCRIPTOR));
         }
+
+        for (size_t i = 0; i < config.env_vars.size(); i += 2)
+            setenv(config.env_vars[i].c_str(), config.env_vars[i + 1].c_str(), 0);
 
         // Reset the signal mask: it may be non-empty and will be inherited
         // by the child process, which might not expect this.

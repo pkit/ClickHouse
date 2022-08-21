@@ -39,4 +39,22 @@ void ExecutableSettings::loadFromQuery(ASTStorage & storage_def)
     }
 }
 
+void ExecutableSettings::applyEnvVars(const SettingsChanges & changes, const std::vector<String> & allow_list)
+{
+    for (auto change : changes)
+    {
+        for (const auto & allowed : allow_list)
+        {
+            re2::RE2 matcher(allowed);
+            if (re2::RE2::FullMatch(change.name, matcher))
+            {
+                env_vars.emplace_back(std::move(change.name));
+                // env var values are always strings
+                env_vars.emplace_back(DB::toString(change.value));
+                break;
+            }
+        }
+    }
+}
+
 }

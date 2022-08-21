@@ -58,6 +58,8 @@ public:
 
         std::vector<std::string> arguments;
 
+        std::vector<std::string> env_vars;
+
         std::vector<int> read_fds;
 
         std::vector<int> write_fds;
@@ -100,7 +102,7 @@ private:
     static Poco::Logger * getLogger();
 
     /// Print command name and the list of arguments to log. NOTE: No escaping of arguments is performed.
-    static void logCommand(const char * filename, char * const argv[]);
+    static void logCommand(const char * filename, char * const argv[], const std::vector<std::string> *env);
 
     static std::unique_ptr<ShellCommand> executeImpl(const char * filename, char * const argv[], const Config & config);
 };
