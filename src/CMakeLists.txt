@@ -451,6 +451,14 @@ if (TARGET ch_contrib::parquet)
     dbms_target_link_libraries (PRIVATE ch_contrib::parquet)
 endif ()
 
+if (TARGET ch_contrib::arrow_flight)
+    dbms_target_link_libraries (PRIVATE ch_contrib::arrow_flight)
+endif ()
+
+if (TARGET ch_contrib::arrow_flight_sql)
+    dbms_target_link_libraries (PRIVATE ch_contrib::arrow_flight_sql)
+endif ()
+
 if (TARGET ch_contrib::avrocpp)
     dbms_target_link_libraries(PRIVATE ch_contrib::avrocpp)
 endif ()

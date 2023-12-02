@@ -210,7 +210,93 @@ target_include_directories(_orc SYSTEM PRIVATE
 
 # === arrow
 
+# Ignore warnings while compiling protobuf-generated *.pb.h and *.pb.cpp files.
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
+
+# Disable clang-tidy for protobuf-generated *.pb.h and *.pb.cpp files.
+set (CMAKE_CXX_CLANG_TIDY "")
+
 set(LIBRARY_DIR "${ClickHouse_SOURCE_DIR}/contrib/arrow/cpp/src/arrow")
+
+# === arrow-flight
+set(FLIGHT_PROTO_PATH "${LIBRARY_DIR}/../../../format")
+set(FLIGHT_PROTO "${LIBRARY_DIR}/../../../format/Flight.proto")
+set(PROTOBUF_INCLUDE_DIR "${ClickHouse_SOURCE_DIR}/contrib/google-protobuf/src")
+
+set(FLIGHT_GENERATED_PROTO_FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/arrow/flight/Flight.pb.cc"
+        "${CMAKE_CURRENT_BINARY_DIR}/arrow/flight/Flight.pb.h"
+        "${CMAKE_CURRENT_BINARY_DIR}/arrow/flight/Flight.grpc.pb.cc"
+        "${CMAKE_CURRENT_BINARY_DIR}/arrow/flight/Flight.grpc.pb.h")
+
+set(PROTO_DEPENDS ${FLIGHT_PROTO} ${ARROW_PROTOBUF_LIBPROTOBUF})
+
+add_custom_command(OUTPUT ${FLIGHT_GENERATED_PROTO_FILES}
+        COMMAND ${PROTOBUF_EXECUTABLE} "-I${FLIGHT_PROTO_PATH}" "-I${PROTOBUF_INCLUDE_DIR}"
+        "--cpp_out=${CMAKE_CURRENT_BINARY_DIR}/arrow/flight" "${FLIGHT_PROTO}"
+        DEPENDS ${PROTO_DEPENDS} ARGS
+        COMMAND ${PROTOBUF_EXECUTABLE} "-I${FLIGHT_PROTO_PATH}" "-I${PROTOBUF_INCLUDE_DIR}"
+        "--grpc_out=${CMAKE_CURRENT_BINARY_DIR}/arrow/flight"
+        "--plugin=protoc-gen-grpc=$<TARGET_FILE:grpc_cpp_plugin>"
+        "${FLIGHT_PROTO}")
+
+set_source_files_properties(${FLIGHT_GENERATED_PROTO_FILES} PROPERTIES GENERATED TRUE)
+add_custom_target(flight_grpc_gen ALL DEPENDS ${FLIGHT_GENERATED_PROTO_FILES})
+
+set(ARROW_FLIGHT_SRCS
+        "${CMAKE_CURRENT_BINARY_DIR}/arrow/flight/Flight.pb.cc"
+        "${LIBRARY_DIR}/flight/client.cc"
+        "${LIBRARY_DIR}/flight/client_cookie_middleware.cc"
+        "${LIBRARY_DIR}/flight/client_tracing_middleware.cc"
+        "${LIBRARY_DIR}/flight/cookie_internal.cc"
+        "${LIBRARY_DIR}/flight/middleware.cc"
+        "${LIBRARY_DIR}/flight/serialization_internal.cc"
+        "${LIBRARY_DIR}/flight/server.cc"
+        "${LIBRARY_DIR}/flight/server_auth.cc"
+        "${LIBRARY_DIR}/flight/server_middleware.cc"
+        "${LIBRARY_DIR}/flight/server_tracing_middleware.cc"
+        "${LIBRARY_DIR}/flight/transport.cc"
+        "${LIBRARY_DIR}/flight/transport_server.cc"
+        # Bundle the gRPC impl with libarrow_flight
+        "${LIBRARY_DIR}/flight/transport/grpc/grpc_client.cc"
+        "${LIBRARY_DIR}/flight/transport/grpc/grpc_server.cc"
+        "${LIBRARY_DIR}/flight/transport/grpc/serialization_internal.cc"
+        "${LIBRARY_DIR}/flight/transport/grpc/protocol_grpc_internal.cc"
+        "${LIBRARY_DIR}/flight/transport/grpc/util_internal.cc"
+        "${LIBRARY_DIR}/flight/types.cc")
+
+# === arrow-flight-sql
+
+set(FLIGHT_SQL_PROTO_PATH "${LIBRARY_DIR}/../../../format")
+set(FLIGHT_SQL_PROTO ${LIBRARY_DIR}/../../../format/FlightSql.proto)
+
+set(FLIGHT_SQL_GENERATED_PROTO_FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/arrow/flight/sql/FlightSql.pb.cc"
+        "${CMAKE_CURRENT_BINARY_DIR}/arrow/flight/sql/FlightSql.pb.h")
+
+set(SQL_PROTO_DEPENDS ${FLIGHT_SQL_PROTO} ${ARROW_PROTOBUF_LIBPROTOBUF})
+
+set(FLIGHT_SQL_PROTOC_COMMAND
+        ${PROTOBUF_EXECUTABLE} "-I${FLIGHT_SQL_PROTO_PATH}" "-I${PROTOBUF_INCLUDE_DIR}"
+        "--cpp_out=dllexport_decl=ARROW_FLIGHT_SQL_EXPORT:${CMAKE_CURRENT_BINARY_DIR}/arrow/flight/sql")
+if(Protobuf_VERSION VERSION_LESS 3.15)
+    list(APPEND FLIGHT_SQL_PROTOC_COMMAND "--experimental_allow_proto3_optional")
+endif()
+list(APPEND FLIGHT_SQL_PROTOC_COMMAND "${FLIGHT_SQL_PROTO}")
+
+add_custom_command(OUTPUT ${FLIGHT_SQL_GENERATED_PROTO_FILES}
+        COMMAND ${FLIGHT_SQL_PROTOC_COMMAND}
+        DEPENDS ${SQL_PROTO_DEPENDS})
+
+set_source_files_properties(${FLIGHT_SQL_GENERATED_PROTO_FILES} PROPERTIES GENERATED TRUE)
+add_custom_target(flight_sql_protobuf_gen ALL DEPENDS ${FLIGHT_SQL_GENERATED_PROTO_FILES})
+
+set(ARROW_FLIGHT_SQL_SRCS
+        "${LIBRARY_DIR}/flight/sql/server.cc"
+        "${LIBRARY_DIR}/flight/sql/sql_info_internal.cc"
+        "${LIBRARY_DIR}/flight/sql/column_metadata.cc"
+        "${LIBRARY_DIR}/flight/sql/client.cc"
+        "${LIBRARY_DIR}/flight/sql/protocol_internal.cc")
 
 # arrow/cpp/src/arrow/CMakeLists.txt (ARROW_SRCS + ARROW_COMPUTE + ARROW_IPC)
 set(ARROW_SRCS
@@ -444,6 +530,31 @@ target_link_libraries(_arrow PRIVATE
     ch_contrib::brotli
 )
 target_link_libraries(_arrow PUBLIC _orc)
+
+# contrib/grpc is 1.59.2
+# if(ARROW_GRPC_VERSION VERSION_GREATER_EQUAL "1.43")
+add_definitions(-DGRPC_USE_TLS_CHANNEL_CREDENTIALS_OPTIONS
+        -DGRPC_NAMESPACE_FOR_TLS_CREDENTIALS_OPTIONS=grpc::experimental
+        -DGRPC_USE_CERTIFICATE_VERIFIER)
+# endif()
+
+add_library(_arrow_flight ${ARROW_FLIGHT_SRCS})
+add_library(ch_contrib::arrow_flight ALIAS _arrow_flight)
+add_dependencies(_arrow_flight flight_grpc_gen)
+target_include_directories(_arrow_flight SYSTEM PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(_arrow_flight SYSTEM BEFORE PUBLIC ${ARROW_SRC_DIR})
+target_include_directories(_arrow_flight SYSTEM BEFORE PUBLIC "${ClickHouse_SOURCE_DIR}/contrib/arrow-cmake/cpp/src")
+target_include_directories(_arrow_flight SYSTEM PRIVATE ${ARROW_SRC_DIR})
+target_link_libraries(_arrow_flight PUBLIC ch_contrib::grpc)
+
+add_library(_arrow_flight_sql ${ARROW_FLIGHT_SQL_SRCS})
+add_library(ch_contrib::arrow_flight_sql ALIAS _arrow_flight_sql)
+add_dependencies(_arrow_flight_sql flight_sql_protobuf_gen)
+target_include_directories(_arrow_flight_sql SYSTEM PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(_arrow_flight_sql SYSTEM BEFORE PUBLIC ${ARROW_SRC_DIR})
+target_include_directories(_arrow_flight_sql SYSTEM BEFORE PUBLIC "${ClickHouse_SOURCE_DIR}/contrib/arrow-cmake/cpp/src")
+target_include_directories(_arrow_flight_sql SYSTEM PRIVATE ${ARROW_SRC_DIR})
+target_link_libraries(_arrow_flight_sql PUBLIC ch_contrib::grpc)
 
 add_dependencies(_arrow protoc)
 
