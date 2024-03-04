@@ -14,6 +14,8 @@ public:
 
     std::string getName() const override { return name; }
 
+    bool supportsRemoteQueries() const override { return true; }
+
 private:
     StoragePtr executeImpl(
             const ASTPtr & ast_function, ContextPtr context,

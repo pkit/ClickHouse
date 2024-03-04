@@ -22,6 +22,7 @@ public:
     const char * getStorageTypeName() const override { return storage_type_name; }
     ColumnsDescription getActualTableStructure(ContextPtr) const override;
     void parseArguments(const ASTPtr & ast_function_, ContextPtr context_) override;
+    bool supportsRemoteQueries() const override { return true; }
 
 private:
     Poco::Logger * logger = &Poco::Logger::get("TableFunctionHive");

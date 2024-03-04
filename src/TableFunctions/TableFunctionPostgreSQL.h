@@ -16,6 +16,7 @@ class TableFunctionPostgreSQL : public ITableFunction
 public:
     static constexpr auto name = "postgresql";
     std::string getName() const override { return name; }
+    bool supportsRemoteQueries() const override { return true; }
 
 private:
     StoragePtr executeImpl(

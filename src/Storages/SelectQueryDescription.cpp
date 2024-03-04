@@ -6,6 +6,7 @@
 #include <Interpreters/getTableExpressions.h>
 #include <Interpreters/AddDefaultDatabaseVisitor.h>
 #include <Interpreters/Context.h>
+#include <TableFunctions/TableFunctionFactory.h>
 
 namespace DB
 {
@@ -59,9 +60,28 @@ StorageID extractDependentTableFromSelectQuery(ASTSelectQuery & query, ContextPt
     else if (auto subquery = extractTableExpression(query, 0))
     {
         auto * ast_select = subquery->as<ASTSelectWithUnionQuery>();
+        auto * func = subquery->as<ASTFunction>();
+        if (func)
+        {
+            auto table_function = TableFunctionFactory::instance().get(subquery, context);
+            if (table_function->supportsRemoteQueries())
+                throw Exception(ErrorCodes::QUERY_IS_NOT_SUPPORTED_IN_MATERIALIZED_VIEW,
+                                "StorageMaterializedView cannot be created from table functions ({}) that support remote queries",
+                                serializeAST(*subquery));
+            for (auto & arg : func->arguments->children)
+            {
+                auto * ast_sub = arg->as<ASTSubquery>();
+                if (ast_sub)
+                {
+                    ast_select = ast_sub->children.at(0)->as<ASTSelectWithUnionQuery>();
+                    if (ast_select)
+                        break;
+                }
+            }
+        }
         if (!ast_select)
             throw Exception(ErrorCodes::QUERY_IS_NOT_SUPPORTED_IN_MATERIALIZED_VIEW,
-                            "StorageMaterializedView cannot be created from table functions ({})",
+                            "StorageMaterializedView cannot be created from table functions ({}) that have no local dependent table",
                             serializeAST(*subquery));
         if (ast_select->list_of_selects->children.size() != 1)
             throw Exception(ErrorCodes::QUERY_IS_NOT_SUPPORTED_IN_MATERIALIZED_VIEW, "UNION is not supported for MATERIALIZED VIEW");
