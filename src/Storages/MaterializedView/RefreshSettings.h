@@ -8,11 +8,12 @@ namespace DB
 struct RefreshSettingsImpl;
 class SettingsChanges;
 
-/// List of available types supported in RabbitMQSettings object
+/// List of available types supported in StorageMaterializedView object
 #define REFRESH_SETTINGS_SUPPORTED_TYPES(CLASS_NAME, M) \
     M(CLASS_NAME, Bool) \
     M(CLASS_NAME, Int64) \
-    M(CLASS_NAME, UInt64)
+    M(CLASS_NAME, UInt64) \
+    M(CLASS_NAME, String)
 
 REFRESH_SETTINGS_SUPPORTED_TYPES(RefreshSettings, DECLARE_SETTING_TRAIT)
 
