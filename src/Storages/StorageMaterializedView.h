@@ -121,14 +121,16 @@ private:
     void checkStatementCanBeForwarded() const;
 
     ContextMutablePtr createRefreshContext() const;
+    std::tuple<std::shared_ptr<ASTCreateQuery>, std::unique_ptr<CurrentThread::QueryScope>>
+    prepareCreate(ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id, const RefreshSettings & settings) const;
     /// Prepare to refresh a refreshable materialized view: create temporary table (if needed) and
     /// form the insert-select query.
     /// out_temp_table_id may be assigned before throwing an exception, in which case the caller
     /// must drop the temp table before rethrowing.
     std::tuple<std::shared_ptr<ASTInsertQuery>, std::unique_ptr<CurrentThread::QueryScope>>
-    prepareRefresh(bool append, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id) const;
-    std::optional<StorageID> exchangeTargetTable(StorageID fresh_table, ContextPtr refresh_context) const;
-    void dropTempTable(StorageID table, ContextMutablePtr refresh_context);
+    prepareRefresh(ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id) const;
+    std::optional<StorageID> exchangeTargetTable(StorageID fresh_table, ContextPtr refresh_context, const RefreshSettings & settings) const;
+    void dropTempTable(StorageID table, ContextMutablePtr refresh_context, const RefreshSettings & settings);
 
     void updateTargetTableId(std::optional<String> database_name, std::optional<String> table_name);
 };

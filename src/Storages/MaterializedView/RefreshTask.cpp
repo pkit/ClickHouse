@@ -1,3 +1,5 @@
+#include "Interpreters/InterpreterCreateQuery.h"
+#include "Processors/Sinks/EmptySink.h"
 #include <Storages/MaterializedView/RefreshTask.h>
 
 #include <Common/CurrentMetrics.h>
@@ -44,6 +46,7 @@ namespace RefreshSetting
     extern const RefreshSettingsInt64 refresh_retries;
     extern const RefreshSettingsUInt64 refresh_retry_initial_backoff_ms;
     extern const RefreshSettingsUInt64 refresh_retry_max_backoff_ms;
+    extern const RefreshSettingsString on_cluster;
 }
 
 namespace ErrorCodes
@@ -568,8 +571,36 @@ UUID RefreshTask::executeRefreshUnlocked(bool append, int32_t root_znode_version
     try
     {
         {
+            if (!append)
+            {
+                auto [create_query, query_scope] = view->prepareCreate(refresh_context, table_to_drop, refresh_settings);
+                InterpreterCreateQuery create_interpreter(create_query, refresh_context);
+                create_interpreter.setInternal(true);
+                BlockIO block_io = create_interpreter.execute();
+                QueryPipeline & pipeline = block_io.pipeline;
+                if (pipeline.pulling())
+                    // only ON CLUSTER pipeline is incomplete
+                    pipeline.complete(std::make_shared<EmptySink>(pipeline.getHeader()));
+                PipelineExecutor executor(pipeline.processors, pipeline.process_list_element);
+                executor.setReadProgressCallback(pipeline.getReadProgressCallback());
+
+                {
+                    std::unique_lock exec_lock(execution.executor_mutex);
+                    if (execution.interrupt_execution.load())
+                        throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled");
+                    execution.executor = &executor;
+                }
+                SCOPE_EXIT({
+                    std::unique_lock exec_lock(execution.executor_mutex);
+                    execution.executor = nullptr;
+                });
+                executor.execute(pipeline.getNumThreads(), pipeline.getConcurrencyControl());
+                if (execution.interrupt_execution.load())
+                    throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled");
+            }
+
             /// Create a table.
-            auto [refresh_query, query_scope] = view->prepareRefresh(append, refresh_context, table_to_drop);
+            auto [refresh_query, query_scope] = view->prepareRefresh(refresh_context, table_to_drop);
             new_table_id = refresh_query->table_id;
 
             /// Add the query to system.processes and allow it to be killed with KILL QUERY.
@@ -625,17 +656,17 @@ UUID RefreshTask::executeRefreshUnlocked(bool append, int32_t root_znode_version
 
         /// Exchange tables.
         if (!append)
-            table_to_drop = view->exchangeTargetTable(new_table_id, refresh_context);
+            table_to_drop = view->exchangeTargetTable(new_table_id, refresh_context, refresh_settings);
     }
     catch (...)
     {
         if (table_to_drop.has_value())
-            view->dropTempTable(table_to_drop.value(), refresh_context);
+            view->dropTempTable(table_to_drop.value(), refresh_context, refresh_settings);
         throw;
     }
 
     if (table_to_drop.has_value())
-        view->dropTempTable(table_to_drop.value(), refresh_context);
+        view->dropTempTable(table_to_drop.value(), refresh_context, refresh_settings);
 
     return new_table_id.uuid;
 }
